@@ -116,3 +116,4 @@ const translations = {
         view_apply: "వివరాలు చూడండి & దరఖాస్తు చేయండి"
     }
 };
+
