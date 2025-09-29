@@ -10,7 +10,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- DATABASE MODELS ---
+# --- DATABASE MODELS (User and Application models remain the same) ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(150))
@@ -29,9 +29,8 @@ class User(db.Model):
     stream = db.Column(db.String(100), nullable=True)
     year = db.Column(db.Integer, nullable=True)
     location = db.Column(db.String(100), nullable=True)
-    skills = db.Column(db.Text, nullable=True) # Stored as a JSON string
-    interests = db.Column(db.Text, nullable=True) # <-- ADDED: To store user interests as a JSON string
-    photo = db.Column(db.Text, nullable=True) # Stored as a Base64 string
+    skills = db.Column(db.Text, nullable=True)
+    photo = db.Column(db.Text, nullable=True)
     applications = db.relationship('Application', backref='applicant', lazy=True)
 
 class Application(db.Model):
@@ -45,7 +44,7 @@ class Application(db.Model):
     work_sample = db.Column(db.String(300), nullable=True)
     applied_on = db.Column(db.DateTime, default=datetime.utcnow)
 
-# --- AUTH & PAGE ROUTES (Unchanged) ---
+# --- AUTH & PAGE ROUTES ---
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -53,12 +52,14 @@ def index():
 @app.route('/signup', methods=['POST'])
 def signup():
     data = request.get_json()
-    user = User.query.filter_by(email=data['email']).first()
-    if user:
-        return jsonify({'message': 'Email address already exists'}), 409
-    
-    hashed_password = generate_password_hash(data['password'], method='pbkdf2:sha256')
-    new_user = User(full_name=data['name'], email=data['email'], mobile=data['mobile'], password=hashed_password)
+    name = data['name']
+    email = data['email']
+    mobile = data['mobile']
+    password = data['password']
+    user = User.query.filter_by(email=email).first()
+    if user: return jsonify({'message': 'Email address already exists'}), 409
+    hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
+    new_user = User(full_name=name, email=email, mobile=mobile, password=hashed_password)
     db.session.add(new_user)
     db.session.commit()
     session['user_id'] = new_user.id
@@ -67,15 +68,14 @@ def signup():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    user = User.query.filter_by(email=data['email']).first()
-    if not user or not check_password_hash(user.password, data['password']):
+    email = data['email']
+    password = data['password']
+    user = User.query.filter_by(email=email).first()
+    if not user or not check_password_hash(user.password, password):
         return jsonify({'message': 'Invalid credentials'}), 401
-    
     session['user_id'] = user.id
-    if user.college:
-        return jsonify({'message': 'Login successful', 'redirect': url_for('recommendations')}), 200
-    else:
-        return jsonify({'message': 'Login successful', 'redirect': url_for('dashboard')}), 200
+    if user.college: return jsonify({'message': 'Login successful', 'redirect': url_for('recommendations')}), 200
+    else: return jsonify({'message': 'Login successful', 'redirect': url_for('dashboard')}), 200
 
 @app.route('/logout')
 def logout():
@@ -96,7 +96,7 @@ def application_form():
 def recommendations():
     if 'user_id' not in session: return redirect(url_for('index'))
     return render_template('recommendations.html')
-
+    
 @app.route('/profile')
 def profile():
     if 'user_id' not in session: return redirect(url_for('index'))
@@ -112,22 +112,18 @@ def my_applications():
     if 'user_id' not in session: return redirect(url_for('index'))
     return render_template('my-applications.html')
 
+# --- NEW: Thank You Page Route ---
 @app.route('/application-thank-you')
 def application_thank_you():
     if 'user_id' not in session: return redirect(url_for('index'))
     return render_template('application-thank-you.html')
 
 # --- DATA HANDLING API ROUTES ---
-
 @app.route('/submit_application', methods=['POST'])
 def submit_application():
-    if 'user_id' not in session:
-        return jsonify({'message': 'User not logged in'}), 401
-    
+    if 'user_id' not in session: return jsonify({'message': 'User not logged in'}), 401
     user = User.query.get(session['user_id'])
-    if not user:
-        return jsonify({'message': 'User not found'}), 404
-        
+    if not user: return jsonify({'message': 'User not found'}), 404
     data = request.get_json()
     try:
         user.full_name = data.get('fullName', user.full_name)
@@ -144,75 +140,39 @@ def submit_application():
         user.year = data.get('year')
         user.location = data.get('location')
         user.skills = json.dumps(data.get('skills', []))
-        user.interests = json.dumps(data.get('interests', [])) # <-- ADDED: Save interests
-        user.photo = data.get('photo', user.photo)
-        
+        if data.get('photo'): user.photo = data.get('photo')
+        db.session.add(user)
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         return jsonify({'message': f'An error occurred: {e}'}), 500
-        
     return jsonify({'message': 'Application saved!', 'redirect': url_for('recommendations')}), 200
 
 @app.route('/get_user_details', methods=['GET'])
 def get_user_details():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Not logged in'}), 401
-        
+    if 'user_id' not in session: return jsonify({'error': 'Not logged in'}), 401
     user = User.query.get(session['user_id'])
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-        
-    return jsonify({
-        'name': user.full_name,
-        'skills': json.loads(user.skills) if user.skills else [],
-        'photo': user.photo,
-        'stream': user.stream,
-        'interests': json.loads(user.interests) if user.interests else [] # <-- ADDED: Send interests
-    })
+    if not user: return jsonify({'error': 'User not found'}), 404
+    return jsonify({'name': user.full_name, 'skills': json.loads(user.skills) if user.skills else [], 'photo': user.photo})
 
 @app.route('/get_application_data', methods=['GET'])
 def get_application_data():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Not logged in'}), 401
-        
+    if 'user_id' not in session: return jsonify({'error': 'Not logged in'}), 401
     user = User.query.get(session['user_id'])
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-        
+    if not user: return jsonify({'error': 'User not found'}), 404
     return jsonify({
-        'fullName': user.full_name,
-        'email': user.email,
-        'dob': user.dob,
-        'phone': user.phone or user.mobile,
-        'state': user.state,
-        'city': user.city,
-        'linkedin': user.linkedin,
-        'github': user.github,
-        'about': user.about,
-        'college': user.college,
-        'qualification': user.qualification,
-        'stream': user.stream,
-        'year': user.year,
-        'location': user.location,
-        'skills': json.loads(user.skills) if user.skills else [],
-        'interests': json.loads(user.interests) if user.interests else [], # <-- ADDED: Send interests
-        'photo': user.photo
+        'fullName': user.full_name, 'email': user.email, 'dob': user.dob, 'phone': user.phone or user.mobile, 'state': user.state, 'city': user.city, 'linkedin': user.linkedin, 'github': user.github, 'about': user.about, 'college': user.college, 'qualification': user.qualification, 'stream': user.stream, 'year': user.year, 'location': user.location, 'skills': json.loads(user.skills) if user.skills else [], 'photo': user.photo
     })
 
 @app.route('/apply', methods=['POST'])
 def apply():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Not logged in'}), 401
-        
+    if 'user_id' not in session: return jsonify({'error': 'Not logged in'}), 401
     data = request.get_json()
     user_id = session['user_id']
     internship_id = data.get('internship_id')
-    
     existing_application = Application.query.filter_by(user_id=user_id, internship_id=internship_id).first()
     if existing_application:
         return jsonify({'error': 'You have already applied for this internship.'}), 409
-        
     new_application = Application(
         user_id=user_id,
         internship_id=internship_id,
@@ -223,23 +183,22 @@ def apply():
     )
     db.session.add(new_application)
     db.session.commit()
-    
+    # --- UPDATED REDIRECT ---
     return jsonify({'message': 'Application submitted successfully!', 'redirect': url_for('application_thank_you')}), 200
 
 @app.route('/get_my_applications', methods=['GET'])
 def get_my_applications():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Not logged in'}), 401
-        
+    if 'user_id' not in session: return jsonify({'error': 'Not logged in'}), 401
     apps = Application.query.filter_by(user_id=session['user_id']).order_by(Application.applied_on.desc()).all()
-    applications_list = [{
-        'id': app.internship_id,
-        'title': app.internship_title,
-        'org': app.internship_org,
-        'status': app.status,
-        'applied_on': app.applied_on.strftime('%d %b, %Y')
-    } for app in apps]
-    
+    applications_list = []
+    for app in apps:
+        applications_list.append({
+            'id': app.internship_id,
+            'title': app.internship_title,
+            'org': app.internship_org,
+            'status': app.status,
+            'applied_on': app.applied_on.strftime('%d %b, %Y')
+        })
     return jsonify(applications_list)
 
 if __name__ == '__main__':
